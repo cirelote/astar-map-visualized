@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>A* Algorithm Visualization</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Leaflet CSS and JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Tailwind CSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; padding: 0; }
+        #map { width: 100%; height: 100vh; }
+
+        #flash {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #5CB270;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.5s ease;
+            z-index: 1000;
+        }
+
+        .leaflet-control, .leaflet-marker-icon, .leaflet-marker-shadow, .leaflet-popup {
+            display: none;
+        }
+
+        .custom-marker {
+            width: 10px;
+            height: 10px;
+            background-color: #00b7ff;
+            border-radius: 50%;
+            border: none;
+            box-shadow: 0 0 10px #00b7ff;
+        }
+
+        @keyframes lightningStroke {
+            0% {
+                stroke: #F4F269;
+            }
+            25% {
+                stroke: #CEE26B;
+            }
+            50% {
+                stroke: #A8D26D;
+            }
+            75% {
+                stroke: #82C26E;
+            }
+            100% {
+                stroke: #5CB270;
+                opacity: 0;
+            }
+        }
+
+        .path-line {
+            stroke-width: 2.5;
+            stroke-dasharray: 100%;
+            animation: lightningStroke 3s ease-in-out forwards;
+        }
+
+        .final-path {
+            stroke-width: 3;
+            stroke-dasharray: 100%;
+            animation: finalGlow 1.5s cubic-bezier(0.4, 0, 1, 1) forwards;
+        }
+
+        @keyframes finalGlow {
+            0% {
+                stroke-dashoffset: 100%;
+            }
+            100% {
+                stroke-dashoffset: 0%;
+            }
+        }
+    </style>
+</head>
+<body>
+<div id="map"></div>
+<div id="flash"></div>
+
+<script>
+    const map = L.map('map', {
+        zoom: 13,
+        zoomControl: false,
+        attributionControl: false
+    });
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+        attribution: '',
+        subdomains: 'abcd',
+        maxZoom: 19
+    }).addTo(map);
+
+    Promise.all([
+        fetch('../data/astar_steps.json').then(res => res.json()),
+        fetch('../data/astar_path.json').then(res => res.json()),
+        fetch('../data/graph_nodes_edges.json').then(res => res.json())
+    ]).then(([steps, path, graphData]) => {
+        startVisualization(steps, path, graphData);
+    });
+
+    function startVisualization(steps, path, graphData) {
+        const nodeCoords = {};
+        for (const node of graphData.nodes) {
+            nodeCoords[node.id] = [node.y, node.x];
+        }
+
+        const startCoord = nodeCoords[path[0]];
+        const endCoord = nodeCoords[path[path.length - 1]];
+        const bounds = L.latLngBounds([startCoord, endCoord]);
+
+        addCustomMarker(startCoord);
+        addCustomMarker(endCoord);
+
+        const exploredPathsLayer = L.layerGroup().addTo(map);
+
+        let stepIndex = 0;
+        const totalSteps = steps.length;
+        const batchSize = 10; // Adjust based on performance
+        const maxAnimationDelay = 3; // Maximum delay in seconds
+
+        function drawNextBatch() {
+            const segments = [];
+            const delays = [];
+
+            for (let i = 0; i < batchSize && stepIndex < totalSteps; i++, stepIndex++) {
+                const currentStep = steps[stepIndex];
+                const currentNode = currentStep.current_node;
+                const neighbors = currentStep.neighbors;
+
+                for (const neighbor of neighbors) {
+                    segments.push([
+                        nodeCoords[currentNode],
+                        nodeCoords[neighbor]
+                    ]);
+                    // Calculate a random animation delay for individual fading
+                    delays.push(Math.random() * maxAnimationDelay);
+                }
+            }
+
+            if (segments.length > 0) {
+                // Create polylines for each segment with individual animation delays
+                segments.forEach((latlngs, index) => {
+                    const delay = delays[index];
+                    const polyline = L.polyline(latlngs, {
+                        className: 'path-line',
+                        pane: 'shadowPane',
+                        interactive: false
+                    }).addTo(exploredPathsLayer);
+
+                    // Apply animation delay via inline CSS
+                    const element = polyline.getElement();
+                    element.style.animationDelay = `${delay}s`;
+                });
+            }
+
+            if (stepIndex < totalSteps) {
+                requestAnimationFrame(drawNextBatch);
+            } else {
+                // Visualization complete
+                triggerFlash();
+                setTimeout(() => highlightFinalPath(path, nodeCoords, exploredPathsLayer), 200);
+            }
+        }
+
+        // Start the visualization
+        drawNextBatch();
+
+        map.fitBounds(bounds, { padding: [100, 100] });
+    }
+
+    function addCustomMarker(latlng) {
+        L.circleMarker(latlng, {
+            radius: 5,
+            fillColor: '#5CB270',
+            color: null,
+            weight: 0,
+            opacity: 1,
+            fillOpacity: 1,
+            className: 'custom-marker'
+        }).addTo(map);
+    }
+
+    function highlightFinalPath(path, nodeCoords, exploredPathsLayer) {
+        exploredPathsLayer.clearLayers();
+        const latlngs = path.map(nodeId => nodeCoords[nodeId]);
+
+        const polyline = L.polyline(latlngs, {
+            className: 'final-path',
+            pane: 'shadowPane',
+            interactive: false
+        }).addTo(map);
+
+        animateFinalPath(polyline);
+    }
+
+    function animateFinalPath(polyline) {
+        const pathElement = polyline.getElement();
+        const pathLength = pathElement.getTotalLength();
+
+        pathElement.style.strokeDasharray = pathLength;
+        pathElement.style.strokeDashoffset = pathLength;
+        pathElement.style.animation = `finalGlow 1.5s cubic-bezier(0.4, 0, 1, 1) forwards`;
+
+        // Apply gradient colors for start to end effect
+        const gradientColors = [
+            { offset: "0%", color: "#F4F269" },
+            { offset: "25%", color: "#CEE26B" },
+            { offset: "50%", color: "#A8D26D" },
+            { offset: "75%", color: "#82C26E" },
+            { offset: "100%", color: "#5CB270" }
+        ];
+
+        applyGradientToPath(pathElement, gradientColors);
+    }
+
+    function applyGradientToPath(pathElement, gradientColors) {
+        const gradientId = "path-gradient";
+        const svg = pathElement.closest("svg");
+        let gradient = svg.querySelector(`#${gradientId}`);
+
+        if (!gradient) {
+            gradient = document.createElementNS("http://www.w3.org/2000/svg", "linearGradient");
+            gradient.setAttribute("id", gradientId);
+            gradient.setAttribute("x1", "0%");
+            gradient.setAttribute("y1", "0%");
+            gradient.setAttribute("x2", "100%");
+            gradient.setAttribute("y2", "0%");
+            svg.appendChild(gradient);
+        }
+
+        gradient.innerHTML = "";
+        for (const { offset, color } of gradientColors) {
+            const stop = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+            stop.setAttribute("offset", offset);
+            stop.setAttribute("stop-color", color);
+            gradient.appendChild(stop);
+        }
+
+        pathElement.setAttribute("stroke", `url(#${gradientId})`);
+    }
+
+    function triggerFlash() {
+        const flash = document.getElementById('flash');
+        flash.style.opacity = '1';
+        setTimeout(() => flash.style.opacity = '0', 200);
+    }
+</script>
+</body>
+</html>
