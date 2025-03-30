@@ -33,4 +33,7 @@ out/
 cache/
 
 # Generated data
-data/
+data/*
+
+# Sample data
+!data/samples/
